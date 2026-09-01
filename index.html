@@ -4,6 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Strength Ledger｜訓練紀錄</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#171b23">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Strength Ledger">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png" type="image/png">
 <style>
   :root{
     --graphite-950:#12161d;
@@ -753,6 +761,22 @@
     margin-top:12px; font-size:12.5px; color:var(--steel-400);
   }
 
+  .saving-spinner{
+    position:fixed; inset:0; z-index:95;
+    background:rgba(0,0,0,0.25);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .spinner-ring{
+    width:40px; height:40px;
+    border-radius:50%;
+    border:3px solid var(--graphite-600);
+    border-top-color:var(--iron-red);
+    animation:spin 0.7s linear infinite;
+  }
+  @keyframes spin{
+    to{ transform:rotate(360deg); }
+  }
+
   .toast{
     position:fixed; left:50%; top:16px; transform:translateX(-50%);
     background:var(--graphite-700); color:var(--chalk-100);
@@ -770,17 +794,7 @@
 </style>
 </head>
 <body>
-<div id="lockScreen" class="gate-screen">
-  <div class="gate-card">
-    <div class="gate-title">Strength <span class="mark">Ledger</span></div>
-    <div class="gate-sub">輸入密碼繼續</div>
-    <input type="password" id="gatePasswordInput" class="gate-input" placeholder="密碼" autocomplete="current-password"/>
-    <button type="button" id="gateUnlockBtn" class="btn btn-primary btn-block">解鎖</button>
-    <div id="gateError" class="gate-error" style="display:none;">密碼錯誤，請再試一次</div>
-  </div>
-</div>
-
-<div id="signinScreen" class="gate-screen" style="display:none;">
+<div id="signinScreen" class="gate-screen">
   <div class="gate-card">
     <div class="gate-title">Strength <span class="mark">Ledger</span></div>
     <div class="gate-sub">用 Google 帳號登入，資料會存到你自己的雲端硬碟</div>
@@ -820,6 +834,9 @@
 <div id="sessionPickerZone"></div>
 <div id="numberPickerZone"></div>
 <div id="monthPickerZone"></div>
+<div id="savingSpinner" class="saving-spinner" style="display:none;">
+  <div class="spinner-ring"></div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -2531,12 +2548,10 @@
 
   window.addEventListener("resize", clampModalSheets);
 
-  // ================= Google Drive storage + password gate =================
+  // ================= Google Drive storage =================
   // TODO Josh: fill in your OAuth Client ID from Google Cloud Console
   // (APIs & Services → Credentials → OAuth client ID → Web application).
   var GOOGLE_CLIENT_ID = "239888779674-h2m814mnnc19k0jgc0f50uv4ac1j8oli.apps.googleusercontent.com";
-  // TODO Josh: change this to whatever password you want to gate the site with.
-  var APP_PASSWORD = "yenbird0716";
   var DRIVE_FILE_NAME = "strength-ledger-data.json";
   var DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
   // Must exactly match an "Authorized redirect URI" on the OAuth client in Google Cloud Console.
@@ -2592,10 +2607,29 @@
     });
   }
 
+  var savingCount = 0;
+  function showSavingSpinner(){
+    savingCount++;
+    var el = document.getElementById("savingSpinner");
+    if(el) el.style.display = "flex";
+  }
+  function hideSavingSpinner(){
+    savingCount = Math.max(0, savingCount - 1);
+    if(savingCount === 0){
+      var el = document.getElementById("savingSpinner");
+      if(el) el.style.display = "none";
+    }
+  }
+
   async function driveSaveAll(){
     if(!driveFileId) return null;
-    await driveWriteFile(driveFileId, driveStoreCache);
-    return true;
+    showSavingSpinner();
+    try{
+      await driveWriteFile(driveFileId, driveStoreCache);
+      return true;
+    }finally{
+      hideSavingSpinner();
+    }
   }
 
   function installDriveStorageShim(){
@@ -2637,7 +2671,6 @@
       driveStoreCache = await driveReadFile(driveFileId);
       installDriveStorageShim();
 
-      document.getElementById("lockScreen").style.display = "none";
       if(signinScreenEl) signinScreenEl.style.display = "none";
       document.getElementById("app").style.display = "";
       Promise.all([loadSettings(), loadOffDays()]).then(loadSessions);
@@ -2662,20 +2695,6 @@
     window.location.href = authUrl;
   }
 
-  function tryUnlock(){
-    var val = document.getElementById("gatePasswordInput").value;
-    if(val === APP_PASSWORD){
-      document.getElementById("lockScreen").style.display = "none";
-      document.getElementById("signinScreen").style.display = "flex";
-    }else{
-      document.getElementById("gateError").style.display = "block";
-    }
-  }
-
-  document.getElementById("gateUnlockBtn").addEventListener("click", tryUnlock);
-  document.getElementById("gatePasswordInput").addEventListener("keydown", function(e){
-    if(e.key === "Enter") tryUnlock();
-  });
   document.getElementById("googleSigninBtn").addEventListener("click", startGoogleSignin);
 
   // If we just came back from Google's redirect, the access token is in the URL fragment.
@@ -2689,8 +2708,6 @@
     history.replaceState(null, "", window.location.pathname + window.location.search);
     if(error || !token) return;
     driveAccessToken = token;
-    document.getElementById("lockScreen").style.display = "none";
-    document.getElementById("signinScreen").style.display = "flex";
     initDriveAndApp();
   })();
 })();
