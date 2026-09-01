@@ -2539,18 +2539,19 @@
   var APP_PASSWORD = "yenbird0716";
   var DRIVE_FILE_NAME = "strength-ledger-data.json";
   var DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  // Must exactly match an "Authorized redirect URI" on the OAuth client in Google Cloud Console.
+  var REDIRECT_URI = window.location.origin + window.location.pathname;
 
   var driveAccessToken = null;
   var driveFileId = null;
   var driveStoreCache = {};
-  var tokenClient = null;
 
   async function driveApiFetch(url, options){
     options = options || {};
     options.headers = Object.assign({}, options.headers, { "Authorization": "Bearer " + driveAccessToken });
     var res = await fetch(url, options);
     if(res.status === 401){
-      throw new Error("Google 登入已過期，請重新整理頁面再登入一次");
+      throw new Error("Google 登入已過期，請重新登入一次");
     }
     if(!res.ok && res.status !== 404){
       throw new Error("雲端硬碟連線失敗（" + res.status + "）");
@@ -2623,58 +2624,42 @@
   }
 
   async function initDriveAndApp(){
-    document.getElementById("googleSigninBtn").style.display = "none";
-    document.getElementById("signinLoading").style.display = "block";
-    document.getElementById("signinError").style.display = "none";
+    var signinScreenEl = document.getElementById("signinScreen");
+    var googleBtn = document.getElementById("googleSigninBtn");
+    var loadingEl = document.getElementById("signinLoading");
+    var errEl = document.getElementById("signinError");
+    if(googleBtn) googleBtn.style.display = "none";
+    if(loadingEl) loadingEl.style.display = "block";
+    if(errEl) errEl.style.display = "none";
     try{
       driveFileId = await driveFindFileId();
       if(!driveFileId){ driveFileId = await driveCreateFile(); }
       driveStoreCache = await driveReadFile(driveFileId);
       installDriveStorageShim();
 
-      document.getElementById("signinScreen").style.display = "none";
+      document.getElementById("lockScreen").style.display = "none";
+      if(signinScreenEl) signinScreenEl.style.display = "none";
       document.getElementById("app").style.display = "";
       Promise.all([loadSettings(), loadOffDays()]).then(loadSessions);
     }catch(err){
-      document.getElementById("signinLoading").style.display = "none";
-      document.getElementById("googleSigninBtn").style.display = "block";
-      var errEl = document.getElementById("signinError");
-      errEl.style.display = "block";
-      errEl.textContent = err && err.message ? err.message : "連線失敗，請再試一次";
+      if(loadingEl) loadingEl.style.display = "none";
+      if(googleBtn) googleBtn.style.display = "block";
+      if(errEl){
+        errEl.style.display = "block";
+        errEl.textContent = err && err.message ? err.message : "連線失敗，請再試一次";
+      }
     }
   }
 
-  function initGoogleSignin(){
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: DRIVE_SCOPE,
-      callback: function(resp){
-        if(resp.error){
-          var errEl = document.getElementById("signinError");
-          errEl.style.display = "block";
-          errEl.textContent = "登入失敗，請再試一次";
-          return;
-        }
-        driveAccessToken = resp.access_token;
-        initDriveAndApp();
-      }
-    });
-    document.getElementById("googleSigninBtn").addEventListener("click", function(){
-      tokenClient.requestAccessToken();
-    });
-  }
-
-  function loadGisScript(){
-    var s = document.createElement("script");
-    s.src = "https://accounts.google.com/gsi/client";
-    s.async = true;
-    s.onload = initGoogleSignin;
-    s.onerror = function(){
-      var errEl = document.getElementById("signinError");
-      errEl.style.display = "block";
-      errEl.textContent = "無法載入 Google 登入元件，請檢查網路連線";
-    };
-    document.head.appendChild(s);
+  function startGoogleSignin(){
+    var authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(GOOGLE_CLIENT_ID)
+      + "&redirect_uri=" + encodeURIComponent(REDIRECT_URI)
+      + "&response_type=token"
+      + "&scope=" + encodeURIComponent(DRIVE_SCOPE)
+      + "&include_granted_scopes=true"
+      + "&prompt=select_account";
+    window.location.href = authUrl;
   }
 
   function tryUnlock(){
@@ -2682,7 +2667,6 @@
     if(val === APP_PASSWORD){
       document.getElementById("lockScreen").style.display = "none";
       document.getElementById("signinScreen").style.display = "flex";
-      loadGisScript();
     }else{
       document.getElementById("gateError").style.display = "block";
     }
@@ -2692,6 +2676,23 @@
   document.getElementById("gatePasswordInput").addEventListener("keydown", function(e){
     if(e.key === "Enter") tryUnlock();
   });
+  document.getElementById("googleSigninBtn").addEventListener("click", startGoogleSignin);
+
+  // If we just came back from Google's redirect, the access token is in the URL fragment.
+  (function checkAuthRedirect(){
+    var hash = window.location.hash || "";
+    if(hash.indexOf("access_token=") === -1) return;
+    var params = new URLSearchParams(hash.substring(1));
+    var token = params.get("access_token");
+    var error = params.get("error");
+    // Clean the token out of the URL so it isn't left in browser history.
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    if(error || !token) return;
+    driveAccessToken = token;
+    document.getElementById("lockScreen").style.display = "none";
+    document.getElementById("signinScreen").style.display = "flex";
+    initDriveAndApp();
+  })();
 })();
 </script>
 </body>
