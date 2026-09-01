@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Strength Ledger｜訓練紀錄</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#171b23">
+<meta name="theme-color" content="#1a1712">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,20 +14,20 @@
 <link rel="icon" href="icon-192.png" type="image/png">
 <style>
   :root{
-    --graphite-950:#12161d;
-    --graphite-900:#171b23;
-    --graphite-800:#1e2733;
-    --graphite-700:#2c3a4c;
-    --graphite-600:#3b4d63;
-    --chalk-100:#e7edf3;
-    --chalk-300:#c7d2dc;
-    --steel-400:#7c8a99;
-    --steel-500:#5a6472;
-    --iron-red:#4a9fe0;
-    --iron-red-dim:#2f6fa0;
-    --brass-500:#d4a64a;
+    --graphite-950:#15130f;
+    --graphite-900:#1a1712;
+    --graphite-800:#221e18;
+    --graphite-700:#2c2820;
+    --graphite-600:#3a352a;
+    --chalk-100:#efeae0;
+    --chalk-300:#cfc8b8;
+    --steel-400:#8a8478;
+    --steel-500:#6b6558;
+    --iron-red:#d9552a;
+    --iron-red-dim:#a83f1e;
+    --brass-500:#bb9457;
     --ok-green:#5c8a5c;
-    --danger-red:#c1441e;
+    --danger-red:#b0301a;
     --radius:14px;
     --radius-sm:9px;
     font-size:16px;
@@ -52,7 +52,7 @@
     padding:0 0 96px 0;
     position:relative;
     background:
-      radial-gradient(1200px 400px at 50% -120px, rgba(74,159,224,0.10), transparent 60%),
+      radial-gradient(1200px 400px at 50% -120px, rgba(217,85,42,0.10), transparent 60%),
       var(--graphite-950);
   }
   header.topbar{
@@ -1180,6 +1180,7 @@
     if(!s) return;
     state.editingId = sessionId;
     state.draft = JSON.parse(JSON.stringify(s));
+    normalizeRepsManualFlags(state.draft.exercises);
     state.composerOpen = true;
     state.openDetailId = null;
     render();
@@ -1318,7 +1319,7 @@
       html += '<div class="set-header-row">';
       html += '<div class="set-idx"></div>';
       html += '<button type="button" class="set-w unit-toggle-btn toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
-      html += '<button type="button" class="set-r unit-toggle-btn reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數 · '+(ex.repsManual ? "選單" : "手動輸入")+'</button>';
+      html += '<button type="button" class="set-r unit-toggle-btn reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
       html += '<div class="set-rir set-col-label">RIR</div>';
       html += '<div class="set-remove-spacer"></div>';
       html += '</div>';
@@ -1327,7 +1328,7 @@
         html += '<div class="set-row" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">';
         html += '<div class="set-idx">'+(i+1)+'</div>';
         html += '<input class="set-w numlike set-input" data-field="weight" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'" placeholder="重量" value="'+escapeAttr(s.weight)+'"/>';
-        html += buildRepsField("set-input", ex.id, s.id, s.reps, isRepsManual(ex, s), "draft");
+        html += buildRepsField("set-input", ex.id, s.id, s.reps, !!ex.repsManual, "draft");
         html += buildRirSelect("set-input", ex.id, s.id, s.rir);
         html += '<button class="set-remove remove-set-btn" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">×</button>';
         html += '</div>';
@@ -1463,8 +1464,14 @@
   }
 
   var REPS_OPTIONS = ["4-6", "6-8", "8-10", "10-12"];
-  function isRepsManual(ex, s){
-    return !!(ex.repsManual || (s.reps && REPS_OPTIONS.indexOf(s.reps) === -1));
+  function normalizeRepsManualFlags(exercises){
+    (exercises || []).forEach(function(ex){
+      if(typeof ex.repsManual !== "boolean"){
+        ex.repsManual = ex.sets.some(function(s){
+          return s.reps && REPS_OPTIONS.indexOf(s.reps) === -1;
+        });
+      }
+    });
   }
   function buildRepsField(extraClass, exId, setId, current, manual, target){
     if(manual){
@@ -1937,6 +1944,7 @@
     if(!s) return;
     state.dayModalSessionId = sessionId;
     state.dayModalDraft = JSON.parse(JSON.stringify(s));
+    normalizeRepsManualFlags(state.dayModalDraft.exercises);
     state.dayModalEditing = false;
     state.dayModalOpen = true;
     state.sessionPickerOpen = false;
@@ -2279,7 +2287,7 @@
         html += '<div class="set-header-row">';
         html += '<div class="set-idx"></div>';
         html += '<button type="button" class="set-w unit-toggle-btn daymodal-toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
-        html += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數 · '+(ex.repsManual ? "選單" : "手動輸入")+'</button>';
+        html += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
         html += '<div class="set-rir set-col-label">RIR</div>';
         html += '<div class="set-remove-spacer"></div>';
         html += '</div>';
@@ -2287,7 +2295,7 @@
           html += '<div class="set-row" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">';
           html += '<div class="set-idx">'+(i+1)+'</div>';
           html += '<input class="set-w numlike daymodal-set-input" data-field="weight" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'" placeholder="重量" value="'+escapeAttr(s.weight)+'"/>';
-          html += buildRepsField("daymodal-set-input", ex.id, s.id, s.reps, isRepsManual(ex, s), "dayModal");
+          html += buildRepsField("daymodal-set-input", ex.id, s.id, s.reps, !!ex.repsManual, "dayModal");
           html += buildRirSelect("daymodal-set-input", ex.id, s.id, s.rir);
           html += '<button class="set-remove daymodal-remove-set" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">×</button>';
           html += '</div>';
