@@ -33,7 +33,7 @@
     font-size:16px;
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
+  html,body{margin:0;padding:0; touch-action:manipulation; -webkit-text-size-adjust:100%; text-size-adjust:100%;}
   body{
     background:var(--graphite-950);
     color:var(--chalk-100);
@@ -49,7 +49,7 @@
     max-width:560px;
     margin:0 auto;
     min-height:100vh;
-    padding:0 0 96px 0;
+    padding:0 0 32px 0;
     position:relative;
     background:
       radial-gradient(1200px 400px at 50% -120px, rgba(217,85,42,0.10), transparent 60%),
@@ -224,30 +224,27 @@
   .reps-manual-btn{
     text-align:center; cursor:pointer;
   }
-  .number-picker-grid{
-    display:grid;
-    grid-template-columns:repeat(4,1fr);
-    gap:9px;
-    margin-top:4px;
+  .wheel-wrap{ position:relative; margin-top:10px; }
+  .wheel-scroll{
+    height:144px;
+    overflow-y:auto;
+    scroll-snap-type:y mandatory;
+    padding:48px 0;
   }
-  .number-picker-btn{
-    aspect-ratio:1/1;
+  .wheel-item{
+    height:48px;
     display:flex; align-items:center; justify-content:center;
-    border-radius:10px;
-    font-size:19px;
-    font-weight:700;
+    scroll-snap-align:center;
+    font-size:21px;
     font-family:ui-monospace,monospace;
-    color:var(--chalk-100);
-    background:var(--graphite-900);
-    border:1px solid var(--graphite-600);
-    cursor:pointer;
+    color:var(--steel-500);
   }
-  .number-picker-btn.active{
-    background:var(--iron-red);
-    border-color:var(--iron-red);
-    color:var(--chalk-100);
+  .wheel-item.selected{ color:var(--chalk-100); font-weight:800; font-size:27px; }
+  .wheel-highlight{
+    position:absolute; left:0; right:0; top:48px; height:48px;
+    border-top:1px solid var(--graphite-600); border-bottom:1px solid var(--graphite-600);
+    pointer-events:none;
   }
-  .number-picker-btn:active{ border-color:var(--brass-500); }
 
   /* ---- day-type tags ---- */
   .tag-row{
@@ -281,6 +278,13 @@
   /* ---- compact top-right modal actions ---- */
   .modal-header-row{
     display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+  }
+  .modal-header-sticky{
+    position:sticky; top:0; z-index:5;
+    margin:-20px -18px 0 -18px;
+    padding:20px 18px 14px 18px;
+    background:var(--graphite-900);
+    border-bottom:1px solid var(--graphite-700);
   }
   .modal-header-actions{ display:flex; gap:6px; flex-shrink:0; }
   .btn-sm{
@@ -701,13 +705,8 @@
   .session-total b{ color:var(--brass-500); font-family:ui-monospace,monospace; }
 
   .fab{
-    position:fixed;
-    left:50%;
-    transform:translateX(-50%);
-    bottom:20px;
-    max-width:560px;
-    width:calc(100% - 32px);
-    z-index:20;
+    width:100%;
+    margin-bottom:14px;
   }
   .fab button{
     width:100%;
@@ -819,12 +818,12 @@
   </header>
 
   <main>
+    <div id="fabZone"></div>
     <div id="composerZone"></div>
     <div id="calendarZone"></div>
     <div class="status-line" id="statusLine">載入中…</div>
   </main>
 
-  <div class="fab" id="fabZone"></div>
 </div>
 <!-- modal zones live outside .app so position:fixed is never affected by any ancestor layout quirk -->
 <div id="settingsModalZone"></div>
@@ -868,6 +867,7 @@
     dayModalSessionId: null,
     dayModalDraft: null,
     dayModalEditing: false,
+    dayModalPristine: null,
     datePicker: null,
     offDays: {},
     offDayModalOpen: false,
@@ -1627,7 +1627,7 @@
   function renderFab(){
     var zone = document.getElementById("fabZone");
     if(state.composerOpen){ zone.innerHTML = ""; return; }
-    zone.innerHTML = '<button id="newSessionBtn">+ 記錄今天的訓練</button>';
+    zone.innerHTML = '<button id="newSessionBtn">新增訓練紀錄</button>';
     document.getElementById("newSessionBtn").addEventListener("click", openComposerForNew);
   }
 
@@ -1972,6 +1972,11 @@
     render();
   }
 
+  var WHEEL_MIN = 3;
+  var WHEEL_MAX = 15;
+  var WHEEL_DEFAULT = 8;
+  var WHEEL_ITEM_H = 48;
+
   function openNumberPicker(target, exId, setId, current){
     state.numberPicker = { target: target, exId: exId, setId: setId, current: current || "" };
     render();
@@ -1996,30 +2001,55 @@
     closeNumberPicker();
   }
 
+  function commitWheelAndClose(){
+    var scrollEl = document.getElementById("repsWheelScroll");
+    var n = WHEEL_DEFAULT;
+    if(scrollEl){
+      var idx = Math.round(scrollEl.scrollTop / WHEEL_ITEM_H);
+      idx = Math.max(0, Math.min(WHEEL_MAX - WHEEL_MIN, idx));
+      n = WHEEL_MIN + idx;
+    }
+    pickNumber(n);
+  }
+
   function renderNumberPickerModal(){
     var zone = document.getElementById("numberPickerZone");
     if(!state.numberPicker){ zone.innerHTML = ""; return; }
     var np = state.numberPicker;
+    var startVal = parseInt(np.current, 10);
+    if(isNaN(startVal) || startVal < WHEEL_MIN || startVal > WHEEL_MAX){ startVal = WHEEL_DEFAULT; }
+
     var html = '<div class="modal-overlay" id="numberPickerOverlay">';
     html += '<div class="modal-sheet">';
     html += '<div class="modal-title">選擇反覆次數</div>';
-    html += '<div class="number-picker-grid">';
-    for(var n=1;n<=12;n++){
-      var active = String(n) === String(np.current);
-      html += '<button type="button" class="number-picker-btn'+(active?' active':'')+'" data-value="'+n+'">'+n+'</button>';
+    html += '<div class="wheel-wrap">';
+    html += '<div class="wheel-highlight"></div>';
+    html += '<div class="wheel-scroll" id="repsWheelScroll">';
+    for(var n=WHEEL_MIN; n<=WHEEL_MAX; n++){
+      html += '<div class="wheel-item" data-value="'+n+'">'+n+'</div>';
     }
-    html += '</div>';
+    html += '</div></div>';
+    html += '<button type="button" class="btn btn-primary btn-block" id="numberPickerDoneBtn" style="margin-top:16px;">完成</button>';
     html += '</div></div>';
     zone.innerHTML = html;
 
-    document.getElementById("numberPickerOverlay").addEventListener("click", function(e){
-      if(e.target.id === "numberPickerOverlay") closeNumberPicker();
-    });
-    zone.querySelectorAll(".number-picker-btn").forEach(function(btn){
-      btn.addEventListener("click", function(){
-        pickNumber(parseInt(btn.getAttribute("data-value"), 10));
+    var scrollEl = document.getElementById("repsWheelScroll");
+    var items = zone.querySelectorAll(".wheel-item");
+    function markSelected(){
+      var idx = Math.round(scrollEl.scrollTop / WHEEL_ITEM_H);
+      idx = Math.max(0, Math.min(items.length - 1, idx));
+      items.forEach(function(el, i){
+        el.classList.toggle("selected", i === idx);
       });
+    }
+    scrollEl.scrollTop = (startVal - WHEEL_MIN) * WHEEL_ITEM_H;
+    markSelected();
+    scrollEl.addEventListener("scroll", markSelected);
+
+    document.getElementById("numberPickerOverlay").addEventListener("click", function(e){
+      if(e.target.id === "numberPickerOverlay") commitWheelAndClose();
     });
+    document.getElementById("numberPickerDoneBtn").addEventListener("click", commitWheelAndClose);
   }
 
   // ---------- month navigation + month picker ----------
@@ -2119,11 +2149,22 @@
     state.dayModalSessionId = null;
     state.dayModalDraft = null;
     state.dayModalEditing = false;
+    state.dayModalPristine = null;
     render();
   }
 
-  function toggleDayModalEdit(){
-    state.dayModalEditing = !state.dayModalEditing;
+  function enterDayModalEdit(){
+    state.dayModalPristine = JSON.parse(JSON.stringify(state.dayModalDraft));
+    state.dayModalEditing = true;
+    render();
+  }
+
+  function cancelDayModalEdit(){
+    if(state.dayModalPristine){
+      state.dayModalDraft = JSON.parse(JSON.stringify(state.dayModalPristine));
+    }
+    state.dayModalPristine = null;
+    state.dayModalEditing = false;
     render();
   }
 
@@ -2256,19 +2297,23 @@
 
     var html = '<div class="modal-overlay" id="dayModalOverlay">';
     html += '<div class="modal-sheet">';
+    html += '<div class="modal-header-sticky">';
     html += '<div class="modal-header-row">';
     html += '<div><div class="modal-title">'+fmtDateShort(d.date)+' <span style="color:var(--iron-red); font-size:13px;">#'+d.seq+'</span></div>';
     html += '<div class="modal-sub" style="margin-bottom:0;">'+(editing ? '編輯這天的訓練內容' : '這天的訓練內容')+'</div></div>';
     html += '<div class="modal-header-actions">';
-    html += '<button class="btn-sm btn-ghost" id="dayModalEditBtn">'+(editing ? '完成編輯' : '編輯')+'</button>';
-    html += '<button class="btn-sm btn-primary" id="dayModalSaveBtn">儲存</button>';
+    if(editing){
+      html += '<button class="btn-sm btn-ghost" id="dayModalCancelBtn">取消</button>';
+      html += '<button class="btn-sm btn-primary" id="dayModalSaveBtn">儲存</button>';
+    }else{
+      html += '<button class="btn-sm btn-ghost" id="dayModalEditBtn">編輯</button>';
+    }
     html += '</div>';
     html += '</div>';
-    html += '<div style="margin-top:14px;"></div>';
 
     var dmTagOptions = (state.settings && state.settings.dayTypes) || [];
-    if(dmTagOptions.length){
-      html += '<div class="field" style="margin-bottom:14px;">';
+    if(editing && dmTagOptions.length){
+      html += '<div class="field" style="margin:14px 0 0 0;">';
       html += '<label class="modal-field-label">今日訓練項目</label>';
       html += '<div class="tag-row">';
       dmTagOptions.forEach(function(tag){
@@ -2277,6 +2322,8 @@
       });
       html += '</div></div>';
     }
+    html += '</div>';
+    html += '<div style="margin-top:14px;"></div>';
 
     d.exercises.forEach(function(ex){
       if(editing){
@@ -2327,16 +2374,22 @@
     document.getElementById("dayModalOverlay").addEventListener("click", function(e){
       if(e.target.id === "dayModalOverlay") closeDayModal();
     });
-    document.getElementById("dayModalEditBtn").addEventListener("click", toggleDayModalEdit);
-    document.getElementById("dayModalSaveBtn").addEventListener("click", saveDayModal);
+    var editBtn = document.getElementById("dayModalEditBtn");
+    if(editBtn) editBtn.addEventListener("click", enterDayModalEdit);
+    var cancelBtn = document.getElementById("dayModalCancelBtn");
+    if(cancelBtn) cancelBtn.addEventListener("click", cancelDayModalEdit);
+    var dmSaveBtn = document.getElementById("dayModalSaveBtn");
+    if(dmSaveBtn) dmSaveBtn.addEventListener("click", saveDayModal);
 
-    zone.querySelectorAll(".daymodal-tag-pill").forEach(function(btn){
-      btn.addEventListener("click", function(){
-        var tag = btn.getAttribute("data-tag");
-        d.dayType = (d.dayType === tag) ? "" : tag;
-        render();
+    if(editing){
+      zone.querySelectorAll(".daymodal-tag-pill").forEach(function(btn){
+        btn.addEventListener("click", function(){
+          var tag = btn.getAttribute("data-tag");
+          d.dayType = (d.dayType === tag) ? "" : tag;
+          render();
+        });
       });
-    });
+    }
 
     if(editing){
       zone.querySelectorAll(".daymodal-ex-name").forEach(function(inp){
