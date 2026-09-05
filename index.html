@@ -760,6 +760,25 @@
     margin-top:12px; font-size:12.5px; color:var(--steel-400);
   }
 
+  .rotate-overlay{
+    display:none;
+    position:fixed; inset:0; z-index:999;
+    background:var(--graphite-950);
+    align-items:center; justify-content:center;
+    padding:32px;
+  }
+  .rotate-card{
+    text-align:center;
+    color:var(--chalk-100);
+    font-size:16px;
+    line-height:1.7;
+    max-width:320px;
+  }
+  .rotate-icon{ font-size:40px; margin-bottom:14px; }
+  @media (orientation: landscape) and (max-height: 550px){
+    .rotate-overlay{ display:flex; }
+  }
+
   .saving-spinner{
     position:fixed; inset:0; z-index:95;
     background:rgba(0,0,0,0.25);
@@ -800,6 +819,13 @@
     <button type="button" id="googleSigninBtn" class="btn btn-primary btn-block">使用 Google 登入</button>
     <div id="signinLoading" class="gate-loading" style="display:none;">連接雲端硬碟中…</div>
     <div id="signinError" class="gate-error" style="display:none;"></div>
+  </div>
+</div>
+
+<div class="rotate-overlay" id="rotateOverlay">
+  <div class="rotate-card">
+    <div class="rotate-icon">📱</div>
+    請將手機轉回直向使用<br>這個 App 是為直向畫面設計的
   </div>
 </div>
 
@@ -1687,7 +1713,8 @@
     state.offDayModalDate = dateStr;
     state.offDayModalDraft = {
       on: existing === undefined,
-      note: existing || ""
+      note: existing || "",
+      endDate: null
     };
     state.offDayModalOpen = true;
     render();
@@ -1705,17 +1732,33 @@
     render();
   }
 
+  function enumerateDateRange(startIso, endIso){
+    var a = new Date(startIso + "T00:00:00");
+    var b = new Date(endIso + "T00:00:00");
+    if(b < a){ var tmp = a; a = b; b = tmp; }
+    var out = [];
+    var cur = new Date(a);
+    while(cur <= b){
+      out.push(isoOfDate(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+  }
+
   async function saveOffDayModal(){
     var dateStr = state.offDayModalDate;
     var draft = state.offDayModalDraft;
     if(draft.on){
       delete state.offDays[dateStr];
     }else{
-      state.offDays[dateStr] = draft.note || "";
+      var range = draft.endDate ? enumerateDateRange(dateStr, draft.endDate) : [dateStr];
+      range.forEach(function(iso){
+        state.offDays[iso] = draft.note || "";
+      });
     }
     await persistOffDays();
     closeOffDayModal();
-    showToast(draft.on ? "已恢復為可訓練" : "已標記這天無法訓練");
+    showToast(draft.on ? "已恢復為可訓練" : "已標記無法訓練");
   }
 
   function openComposerForDate(dateStr){
@@ -1747,6 +1790,8 @@
     html += '<div class="modal-sub" style="margin-bottom:0;">'+(on ? '這天還沒有訓練紀錄' : '已標記這天無法訓練')+'</div></div>';
     if(on){
       html += '<div class="modal-header-actions"><button type="button" class="btn-sm btn-primary" id="offDayAddSessionBtn">+ 新增訓練紀錄</button></div>';
+    }else{
+      html += '<div class="modal-header-actions"><button type="button" class="btn-sm btn-ghost" id="offDayEndDateBtn">'+(draft.endDate ? ('結束於 '+fmtDateShort(draft.endDate)) : '結束時間')+'</button></div>';
     }
     html += '</div>';
     html += '<div style="margin-top:14px;"></div>';
@@ -1757,6 +1802,10 @@
     html += '</div>';
 
     if(!on){
+      if(draft.endDate){
+        var rangeDays = enumerateDateRange(state.offDayModalDate, draft.endDate);
+        html += '<div class="off-toggle-state" style="margin:-4px 0 12px 0;">會套用到 '+fmtDateShort(rangeDays[0])+' ～ '+fmtDateShort(rangeDays[rangeDays.length-1])+'，共 '+rangeDays.length+' 天</div>';
+      }
       html += '<div class="off-note-field"><label class="modal-field-label">備註</label><textarea id="offNoteInput" placeholder="例如：看醫生">'+escapeHtml(draft.note)+'</textarea></div>';
       html += '<div class="modal-actions">';
       html += '<button class="btn btn-primary" id="offDaySaveBtn" style="flex:1;">儲存</button>';
@@ -1773,6 +1822,12 @@
     var addBtn = document.getElementById("offDayAddSessionBtn");
     if(addBtn){
       addBtn.addEventListener("click", function(){ openComposerForDate(state.offDayModalDate); });
+    }
+    var endDateBtn = document.getElementById("offDayEndDateBtn");
+    if(endDateBtn){
+      endDateBtn.addEventListener("click", function(){
+        openDatePicker("offDayEnd", draft.endDate || state.offDayModalDate);
+      });
     }
     var saveBtn = document.getElementById("offDaySaveBtn");
     if(saveBtn){
@@ -2169,8 +2224,8 @@
   }
 
   // ---------- custom date picker (replaces native <input type=date>) ----------
-  function openDatePicker(target){
-    var currentIso = target === "draft" ? state.draft.date : state.dayModalDraft.date;
+  function openDatePicker(target, initialIso){
+    var currentIso = initialIso || (target === "draft" ? state.draft.date : target === "dayModal" ? state.dayModalDraft.date : todayISO());
     var base = currentIso ? new Date(currentIso + "T00:00:00") : new Date();
     state.datePicker = {
       target: target,
@@ -2201,6 +2256,8 @@
       state.draft._seqTouched = false;
     }else if(dp.target === "dayModal"){
       state.dayModalDraft.date = dateStr;
+    }else if(dp.target === "offDayEnd"){
+      state.offDayModalDraft.endDate = dateStr;
     }
     closeDatePicker();
   }
@@ -2286,6 +2343,13 @@
     closeDayModal();
   }
 
+  function removeExerciseFromDayModal(exId){
+    var d = state.dayModalDraft;
+    if(!d) return;
+    d.exercises = d.exercises.filter(function(e){ return e.id !== exId; });
+    render();
+  }
+
   function renderDayModal(){
     var zone = document.getElementById("dayModalZone");
     if(!state.dayModalOpen || !state.dayModalDraft){
@@ -2295,41 +2359,57 @@
     var d = state.dayModalDraft;
     var editing = state.dayModalEditing;
 
+    // preserve scroll position of the modal's own scroll box across re-renders
+    // (add/remove set, toggles, etc. would otherwise reset it to the top)
+    var existingSheet = zone.querySelector(".modal-sheet");
+    var preservedScroll = existingSheet ? existingSheet.scrollTop : 0;
+
+    function actionButtonsHtml(idSuffix){
+      if(editing){
+        return '<button class="btn-sm btn-ghost dayModalCancelBtn" data-role="cancel'+idSuffix+'">取消</button>'
+             + '<button class="btn-sm btn-primary dayModalSaveBtn" data-role="save'+idSuffix+'">儲存</button>';
+      }
+      return '<button class="btn-sm btn-ghost dayModalEditBtn" data-role="edit'+idSuffix+'">編輯</button>';
+    }
+
     var html = '<div class="modal-overlay" id="dayModalOverlay">';
     html += '<div class="modal-sheet">';
-    html += '<div class="modal-header-sticky">';
-    html += '<div class="modal-header-row">';
-    html += '<div><div class="modal-title">'+fmtDateShort(d.date)+' <span style="color:var(--iron-red); font-size:13px;">#'+d.seq+'</span></div>';
-    html += '<div class="modal-sub" style="margin-bottom:0;">'+(editing ? '編輯這天的訓練內容' : '這天的訓練內容')+'</div></div>';
-    html += '<div class="modal-header-actions">';
-    if(editing){
-      html += '<button class="btn-sm btn-ghost" id="dayModalCancelBtn">取消</button>';
-      html += '<button class="btn-sm btn-primary" id="dayModalSaveBtn">儲存</button>';
-    }else{
-      html += '<button class="btn-sm btn-ghost" id="dayModalEditBtn">編輯</button>';
-    }
-    html += '</div>';
-    html += '</div>';
 
-    var dmTagOptions = (state.settings && state.settings.dayTypes) || [];
-    if(editing && dmTagOptions.length){
-      html += '<div class="field" style="margin:14px 0 0 0;">';
-      html += '<label class="modal-field-label">今日訓練項目</label>';
-      html += '<div class="tag-row">';
-      dmTagOptions.forEach(function(tag){
-        var active = d.dayType === tag;
-        html += '<button type="button" class="tag-pill daymodal-tag-pill'+(active?' active':'')+'" data-tag="'+escapeAttr(tag)+'">'+escapeHtml(tag)+'</button>';
-      });
-      html += '</div></div>';
+    if(editing){
+      // editing: plain (non-sticky) header, action bar repeated at top + bottom
+      html += '<div class="modal-header-row" style="justify-content:flex-end;">';
+      html += '<div class="modal-header-actions">'+actionButtonsHtml("Top")+'</div>';
+      html += '</div>';
+      html += '<div style="margin-top:12px;"></div>';
+
+      var dmTagOptions = (state.settings && state.settings.dayTypes) || [];
+      if(dmTagOptions.length){
+        html += '<div class="field" style="margin-bottom:14px;">';
+        html += '<label class="modal-field-label">今日訓練項目</label>';
+        html += '<select class="daymodal-daytype-select">';
+        html += '<option value=""'+(!d.dayType?' selected':'')+'>（未選擇）</option>';
+        dmTagOptions.forEach(function(tag){
+          html += '<option value="'+escapeAttr(tag)+'"'+(d.dayType===tag?' selected':'')+'>'+escapeHtml(tag)+'</option>';
+        });
+        html += '</select></div>';
+      }
+    }else{
+      // read-only: sticky header, date/seq + edit button right-aligned, no filler subtitle
+      html += '<div class="modal-header-sticky">';
+      html += '<div class="modal-header-row" style="justify-content:flex-end;">';
+      html += '<div class="modal-title" style="margin:0 10px 0 0;">'+fmtDateShort(d.date)+' <span style="color:var(--iron-red); font-size:13px;">#'+d.seq+'</span></div>';
+      html += '<div class="modal-header-actions">'+actionButtonsHtml("Top")+'</div>';
+      html += '</div>';
+      html += '</div>';
+      html += '<div style="margin-top:14px;"></div>';
     }
-    html += '</div>';
-    html += '<div style="margin-top:14px;"></div>';
 
     d.exercises.forEach(function(ex){
       if(editing){
         html += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
         html += '<div class="exercise-head">';
         html += '<input type="text" class="ex-name-input daymodal-ex-name" data-ex-id="'+ex.id+'" value="'+escapeAttr(ex.name)+'"/>';
+        html += '<button class="btn-text danger daymodal-remove-ex" data-ex-id="'+ex.id+'">刪除</button>';
         html += '</div>';
         html += '<div class="set-header-row">';
         html += '<div class="set-idx"></div>';
@@ -2368,30 +2448,34 @@
       html += '<div class="session-total">預估總量　<b>'+Math.round(vol).toLocaleString()+'</b> kg·reps</div>';
     }
 
+    if(editing){
+      html += '<div class="modal-header-row" style="justify-content:flex-end; margin-top:18px; padding-top:14px; border-top:1px solid var(--graphite-700);">';
+      html += '<div class="modal-header-actions">'+actionButtonsHtml("Bottom")+'</div>';
+      html += '</div>';
+    }
+
     html += '</div></div>';
     zone.innerHTML = html;
+
+    var newSheet = zone.querySelector(".modal-sheet");
+    if(newSheet) newSheet.scrollTop = preservedScroll;
 
     document.getElementById("dayModalOverlay").addEventListener("click", function(e){
       if(e.target.id === "dayModalOverlay") closeDayModal();
     });
-    var editBtn = document.getElementById("dayModalEditBtn");
-    if(editBtn) editBtn.addEventListener("click", enterDayModalEdit);
-    var cancelBtn = document.getElementById("dayModalCancelBtn");
-    if(cancelBtn) cancelBtn.addEventListener("click", cancelDayModalEdit);
-    var dmSaveBtn = document.getElementById("dayModalSaveBtn");
-    if(dmSaveBtn) dmSaveBtn.addEventListener("click", saveDayModal);
+    zone.querySelectorAll(".dayModalEditBtn").forEach(function(btn){ btn.addEventListener("click", enterDayModalEdit); });
+    zone.querySelectorAll(".dayModalCancelBtn").forEach(function(btn){ btn.addEventListener("click", cancelDayModalEdit); });
+    zone.querySelectorAll(".dayModalSaveBtn").forEach(function(btn){ btn.addEventListener("click", saveDayModal); });
 
-    if(editing){
-      zone.querySelectorAll(".daymodal-tag-pill").forEach(function(btn){
-        btn.addEventListener("click", function(){
-          var tag = btn.getAttribute("data-tag");
-          d.dayType = (d.dayType === tag) ? "" : tag;
-          render();
-        });
-      });
+    var daytypeSelect = zone.querySelector(".daymodal-daytype-select");
+    if(daytypeSelect){
+      daytypeSelect.addEventListener("change", function(){ d.dayType = daytypeSelect.value; });
     }
 
     if(editing){
+      zone.querySelectorAll(".daymodal-remove-ex").forEach(function(btn){
+        btn.addEventListener("click", function(){ removeExerciseFromDayModal(btn.getAttribute("data-ex-id")); });
+      });
       zone.querySelectorAll(".daymodal-ex-name").forEach(function(inp){
         inp.addEventListener("input", function(){
           var ex = d.exercises.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
@@ -2608,6 +2692,15 @@
   }
 
   window.addEventListener("resize", clampModalSheets);
+
+  // Best-effort orientation lock — only works in some Android/installed-PWA
+  // contexts; iOS Safari doesn't support this API at all, hence the CSS
+  // landscape-block overlay above as the reliable fallback everywhere.
+  try{
+    if(screen.orientation && screen.orientation.lock){
+      screen.orientation.lock("portrait").catch(function(){});
+    }
+  }catch(e){}
 
   // ================= Google Drive storage =================
   // TODO Josh: fill in your OAuth Client ID from Google Cloud Console
