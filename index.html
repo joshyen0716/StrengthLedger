@@ -123,6 +123,37 @@
     max-height:85vh;
     overflow-y:auto;
   }
+  .modal-sheet.daymodal-sheet-split{
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .daymodal-split{
+    display:flex;
+    gap:14px;
+    flex:1 1 auto;
+    min-height:0;
+  }
+  .daymodal-split-main{
+    flex:1 1 auto;
+    min-width:0;
+    min-height:0;
+    overflow-y:auto;
+  }
+  .daymodal-split-side{
+    flex:0 0 92px;
+    width:92px;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:3px;
+    padding-left:12px;
+    border-left:1px solid var(--graphite-700);
+  }
+  .daymodal-split-side .modal-title{ font-size:16px; }
+  .daymodal-edit-toprow{ display:flex; align-items:center; gap:10px; }
+  .daymodal-edit-toprow select{ flex:1 1 auto; min-width:0; }
+  .daymodal-edit-toprow > div:empty{ flex:1 1 auto; }
   .modal-title{
     font-size:19px; font-weight:800; margin-bottom:2px;
   }
@@ -854,11 +885,11 @@
 <!-- modal zones live outside .app so position:fixed is never affected by any ancestor layout quirk -->
 <div id="settingsModalZone"></div>
 <div id="dayModalZone"></div>
-<div id="datePickerZone"></div>
 <div id="offDayModalZone"></div>
 <div id="sessionPickerZone"></div>
 <div id="numberPickerZone"></div>
 <div id="monthPickerZone"></div>
+<div id="datePickerZone"></div>
 <div id="savingSpinner" class="saving-spinner" style="display:none;">
   <div class="spinner-ring"></div>
 </div>
@@ -1791,7 +1822,7 @@
     if(on){
       html += '<div class="modal-header-actions"><button type="button" class="btn-sm btn-primary" id="offDayAddSessionBtn">+ 新增訓練紀錄</button></div>';
     }else{
-      html += '<div class="modal-header-actions"><button type="button" class="btn-sm btn-ghost" id="offDayEndDateBtn">'+(draft.endDate ? ('結束於 '+fmtDateShort(draft.endDate)) : '結束時間')+'</button></div>';
+      html += '<div class="modal-header-actions"><button type="button" class="btn-sm btn-ghost" id="offDayEndDateBtn">'+(draft.endDate ? ('結束於 '+fmtDateShort(draft.endDate)) : '設定結束時間')+'</button></div>';
     }
     html += '</div>';
     html += '<div style="margin-top:14px;"></div>';
@@ -2343,6 +2374,19 @@
     closeDayModal();
   }
 
+  function addExerciseToDayModal(){
+    var d = state.dayModalDraft;
+    if(!d) return;
+    d.exercises.push({
+      id: uid(),
+      name: "",
+      weightUnit: "kg",
+      repsManual: false,
+      sets: [{ id: uid(), weight:"", reps:"8-10", rir:"" }]
+    });
+    render();
+  }
+
   function removeExerciseFromDayModal(exId){
     var d = state.dayModalDraft;
     if(!d) return;
@@ -2359,10 +2403,12 @@
     var d = state.dayModalDraft;
     var editing = state.dayModalEditing;
 
-    // preserve scroll position of the modal's own scroll box across re-renders
+    // preserve scroll position of the modal's own scroll box(es) across re-renders
     // (add/remove set, toggles, etc. would otherwise reset it to the top)
     var existingSheet = zone.querySelector(".modal-sheet");
-    var preservedScroll = existingSheet ? existingSheet.scrollTop : 0;
+    var existingMain = zone.querySelector(".daymodal-split-main");
+    var preservedSheetScroll = existingSheet ? existingSheet.scrollTop : 0;
+    var preservedMainScroll = existingMain ? existingMain.scrollTop : 0;
 
     function actionButtonsHtml(idSuffix){
       if(editing){
@@ -2372,85 +2418,89 @@
       return '<button class="btn-sm btn-ghost dayModalEditBtn" data-role="edit'+idSuffix+'">編輯</button>';
     }
 
+    // build the exercise/content HTML once; used inside the split-main pane
+    // when read-only, or inline (full width) when editing.
+    var contentHtml = "";
+    d.exercises.forEach(function(ex){
+      if(editing){
+        contentHtml += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
+        contentHtml += '<div class="exercise-head">';
+        contentHtml += '<input type="text" class="ex-name-input daymodal-ex-name" data-ex-id="'+ex.id+'" value="'+escapeAttr(ex.name)+'"/>';
+        contentHtml += '<button class="btn-text danger daymodal-remove-ex" data-ex-id="'+ex.id+'">刪除</button>';
+        contentHtml += '</div>';
+        contentHtml += '<div class="set-header-row">';
+        contentHtml += '<div class="set-idx"></div>';
+        contentHtml += '<button type="button" class="set-w unit-toggle-btn daymodal-toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
+        contentHtml += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
+        contentHtml += '<div class="set-rir set-col-label">RIR</div>';
+        contentHtml += '<div class="set-remove-spacer"></div>';
+        contentHtml += '</div>';
+        ex.sets.forEach(function(s, i){
+          contentHtml += '<div class="set-row" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">';
+          contentHtml += '<div class="set-idx">'+(i+1)+'</div>';
+          contentHtml += '<input class="set-w numlike daymodal-set-input" data-field="weight" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'" placeholder="重量" value="'+escapeAttr(s.weight)+'"/>';
+          contentHtml += buildRepsField("daymodal-set-input", ex.id, s.id, s.reps, !!ex.repsManual, "dayModal");
+          contentHtml += buildRirSelect("daymodal-set-input", ex.id, s.id, s.rir);
+          contentHtml += '<button class="set-remove daymodal-remove-set" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">×</button>';
+          contentHtml += '</div>';
+        });
+        contentHtml += '<button class="add-set-btn daymodal-add-set" data-ex-id="'+ex.id+'">+ 新增一組</button>';
+        contentHtml += '</div>';
+      }else{
+        contentHtml += '<div class="daymodal-detail-exercise">';
+        contentHtml += '<div class="detail-exercise-name">'+escapeHtml(ex.name)+'</div>';
+        ex.sets.forEach(function(st){
+          contentHtml += '<div class="detail-set">';
+          contentHtml += '<span class="w">'+escapeHtml(st.weight||'—')+(st.weight ? (ex.weightUnit||"kg").toUpperCase() : '')+'</span>';
+          contentHtml += '<span class="r">×'+escapeHtml(st.reps||'—')+'</span>';
+          contentHtml += '<span style="color:var(--iron-red); font-size:11.5px;">RIR '+escapeHtml(st.rir||'—')+'</span>';
+          contentHtml += '</div>';
+        });
+        contentHtml += '</div>';
+      }
+    });
+    var vol = sessionVolume(d);
+    if(!editing && vol !== null){
+      contentHtml += '<div class="session-total">預估總量　<b>'+Math.round(vol).toLocaleString()+'</b> kg·reps</div>';
+    }
+
     var html = '<div class="modal-overlay" id="dayModalOverlay">';
-    html += '<div class="modal-sheet">';
+    html += '<div class="modal-sheet'+(editing ? '' : ' daymodal-sheet-split')+'">';
 
     if(editing){
-      // editing: plain (non-sticky) header, action bar repeated at top + bottom
-      html += '<div class="modal-header-row" style="justify-content:flex-end;">';
-      html += '<div class="modal-header-actions">'+actionButtonsHtml("Top")+'</div>';
-      html += '</div>';
-      html += '<div style="margin-top:12px;"></div>';
-
+      // editing: one consolidated row (day-type dropdown + cancel/save), non-sticky
       var dmTagOptions = (state.settings && state.settings.dayTypes) || [];
+      html += '<div class="daymodal-edit-toprow">';
       if(dmTagOptions.length){
-        html += '<div class="field" style="margin-bottom:14px;">';
-        html += '<label class="modal-field-label">今日訓練項目</label>';
         html += '<select class="daymodal-daytype-select">';
-        html += '<option value=""'+(!d.dayType?' selected':'')+'>（未選擇）</option>';
+        html += '<option value=""'+(!d.dayType?' selected':'')+'>（未選擇項目）</option>';
         dmTagOptions.forEach(function(tag){
           html += '<option value="'+escapeAttr(tag)+'"'+(d.dayType===tag?' selected':'')+'>'+escapeHtml(tag)+'</option>';
         });
-        html += '</select></div>';
+        html += '</select>';
+      }else{
+        html += '<div></div>';
       }
-    }else{
-      // read-only: sticky header, date/seq + edit button right-aligned, no filler subtitle
-      html += '<div class="modal-header-sticky">';
-      html += '<div class="modal-header-row" style="justify-content:flex-end;">';
-      html += '<div class="modal-title" style="margin:0 10px 0 0;">'+fmtDateShort(d.date)+' <span style="color:var(--iron-red); font-size:13px;">#'+d.seq+'</span></div>';
       html += '<div class="modal-header-actions">'+actionButtonsHtml("Top")+'</div>';
       html += '</div>';
-      html += '</div>';
+      html += '<button type="button" class="add-set-btn daymodal-add-exercise" style="margin-top:10px;">新增一個訓練動作</button>';
       html += '<div style="margin-top:14px;"></div>';
-    }
 
-    d.exercises.forEach(function(ex){
-      if(editing){
-        html += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
-        html += '<div class="exercise-head">';
-        html += '<input type="text" class="ex-name-input daymodal-ex-name" data-ex-id="'+ex.id+'" value="'+escapeAttr(ex.name)+'"/>';
-        html += '<button class="btn-text danger daymodal-remove-ex" data-ex-id="'+ex.id+'">刪除</button>';
-        html += '</div>';
-        html += '<div class="set-header-row">';
-        html += '<div class="set-idx"></div>';
-        html += '<button type="button" class="set-w unit-toggle-btn daymodal-toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
-        html += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
-        html += '<div class="set-rir set-col-label">RIR</div>';
-        html += '<div class="set-remove-spacer"></div>';
-        html += '</div>';
-        ex.sets.forEach(function(s, i){
-          html += '<div class="set-row" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">';
-          html += '<div class="set-idx">'+(i+1)+'</div>';
-          html += '<input class="set-w numlike daymodal-set-input" data-field="weight" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'" placeholder="重量" value="'+escapeAttr(s.weight)+'"/>';
-          html += buildRepsField("daymodal-set-input", ex.id, s.id, s.reps, !!ex.repsManual, "dayModal");
-          html += buildRirSelect("daymodal-set-input", ex.id, s.id, s.rir);
-          html += '<button class="set-remove daymodal-remove-set" data-ex-id="'+ex.id+'" data-set-id="'+s.id+'">×</button>';
-          html += '</div>';
-        });
-        html += '<button class="add-set-btn daymodal-add-set" data-ex-id="'+ex.id+'">+ 新增一組</button>';
-        html += '</div>';
-      }else{
-        html += '<div class="daymodal-detail-exercise">';
-        html += '<div class="detail-exercise-name">'+escapeHtml(ex.name)+'</div>';
-        ex.sets.forEach(function(st){
-          html += '<div class="detail-set">';
-          html += '<span class="w">'+escapeHtml(st.weight||'—')+(st.weight ? (ex.weightUnit||"kg").toUpperCase() : '')+'</span>';
-          html += '<span class="r">×'+escapeHtml(st.reps||'—')+'</span>';
-          html += '<span style="color:var(--iron-red); font-size:11.5px;">RIR '+escapeHtml(st.rir||'—')+'</span>';
-          html += '</div>';
-        });
-        html += '</div>';
-      }
-    });
+      html += contentHtml;
 
-    var vol = sessionVolume(d);
-    if(!editing && vol !== null){
-      html += '<div class="session-total">預估總量　<b>'+Math.round(vol).toLocaleString()+'</b> kg·reps</div>';
-    }
-
-    if(editing){
       html += '<div class="modal-header-row" style="justify-content:flex-end; margin-top:18px; padding-top:14px; border-top:1px solid var(--graphite-700);">';
       html += '<div class="modal-header-actions">'+actionButtonsHtml("Bottom")+'</div>';
+      html += '</div>';
+    }else{
+      // read-only: split view. Left (wide, scrollable) = training content.
+      // Right (narrow, fixed) = date / monthly session # / edit button.
+      html += '<div class="daymodal-split">';
+      html += '<div class="daymodal-split-main">'+contentHtml+'</div>';
+      html += '<div class="daymodal-split-side">';
+      html += '<div class="modal-title" style="margin:0;">'+fmtDateShort(d.date)+'</div>';
+      html += '<div style="color:var(--iron-red); font-size:13px; font-weight:700;">#'+d.seq+'</div>';
+      html += '<div class="modal-header-actions" style="margin-top:6px;">'+actionButtonsHtml("Side")+'</div>';
+      html += '</div>';
       html += '</div>';
     }
 
@@ -2458,7 +2508,9 @@
     zone.innerHTML = html;
 
     var newSheet = zone.querySelector(".modal-sheet");
-    if(newSheet) newSheet.scrollTop = preservedScroll;
+    if(newSheet) newSheet.scrollTop = preservedSheetScroll;
+    var newMain = zone.querySelector(".daymodal-split-main");
+    if(newMain) newMain.scrollTop = preservedMainScroll;
 
     document.getElementById("dayModalOverlay").addEventListener("click", function(e){
       if(e.target.id === "dayModalOverlay") closeDayModal();
@@ -2473,6 +2525,8 @@
     }
 
     if(editing){
+      var addExBtn = zone.querySelector(".daymodal-add-exercise");
+      if(addExBtn) addExBtn.addEventListener("click", addExerciseToDayModal);
       zone.querySelectorAll(".daymodal-remove-ex").forEach(function(btn){
         btn.addEventListener("click", function(){ removeExerciseFromDayModal(btn.getAttribute("data-ex-id")); });
       });
