@@ -107,6 +107,16 @@
     font-family:-apple-system,BlinkMacSystemFont,sans-serif;
   }
   .badge-wrap{ display:flex; flex-direction:column; align-items:flex-end; }
+  .topbar-right-group{ display:flex; align-items:center; gap:10px; }
+  .btn-exercise-catalog{
+    background:var(--iron-red); color:var(--chalk-100);
+    border:none; border-radius:999px;
+    padding:9px 14px;
+    font-size:12px; font-weight:700;
+    white-space:nowrap;
+    cursor:pointer;
+  }
+  .btn-exercise-catalog:active{ background:var(--iron-red-dim); }
 
   /* ---- settings modal ---- */
   .modal-overlay{
@@ -187,6 +197,36 @@
   .modal-actions{
     display:flex; gap:10px; margin-top:20px;
   }
+  .catalog-split{ display:flex; gap:12px; }
+  .catalog-cat-col{
+    flex:0 0 108px; width:108px;
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .catalog-cat-btn{
+    text-align:left; padding:9px 10px;
+    border-radius:var(--radius-sm);
+    border:1px solid var(--graphite-600);
+    background:var(--graphite-900);
+    color:var(--chalk-300);
+    font-size:12.5px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .catalog-cat-btn.active{
+    background:var(--iron-red);
+    border-color:var(--iron-red);
+    color:var(--chalk-100);
+    font-weight:700;
+  }
+  .catalog-name-col{ flex:1 1 auto; min-width:0; }
+  .catalog-name-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:9px 2px; border-bottom:1px solid var(--graphite-800);
+    font-size:13.5px;
+  }
+  .catalog-add-row{ display:flex; gap:8px; margin-top:12px; }
+  .catalog-add-row input{ flex:1; }
+
   .session-picker-row{
     display:flex; align-items:center; gap:10px;
     width:100%;
@@ -604,15 +644,23 @@
     padding-top:14px;
   }
   .exercise-head{
-    display:flex; align-items:center; justify-content:space-between;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin-bottom:10px;
   }
-  .exercise-head input{
-    font-size:18px; font-weight:700; border:none; background:none;
-    padding:2px 0; border-bottom:1px solid var(--graphite-600);
-    border-radius:0;
+  .exercise-drag-handle{
+    cursor:grab; color:var(--steel-500); font-size:17px; line-height:1;
+    padding:6px 3px; touch-action:none; flex-shrink:0; user-select:none;
   }
-  .exercise-head input:focus{ border-bottom-color:var(--iron-red); }
+  .exercise-drag-handle:active{ cursor:grabbing; color:var(--brass-500); }
+  .exercise-block.dragging{ opacity:0.5; }
+  .ex-name-fields{
+    display:flex; gap:6px; flex:1 1 auto; min-width:0; flex-wrap:wrap;
+  }
+  .ex-name-fields select, .ex-name-fields input{
+    flex:1 1 96px; min-width:88px; font-size:13px; padding:8px 9px;
+    background:var(--graphite-900); border:1px solid var(--graphite-600);
+    color:var(--chalk-100); border-radius:var(--radius-sm);
+  }
 
   .set-row{
     display:flex;
@@ -868,14 +916,16 @@
       <div class="title">Strength <span class="mark">Ledger</span></div>
       <div class="sub">訓練紀錄</div>
     </div>
-    <div class="badge-wrap">
-      <button class="month-badge" id="monthBadge" type="button">--</button>
-      <div class="month-badge-label">本月已練 / 目標</div>
+    <div class="topbar-right-group">
+      <button class="btn-exercise-catalog" id="openExerciseCatalogBtn" type="button">編輯訓練動作清單</button>
+      <div class="badge-wrap">
+        <button class="month-badge" id="monthBadge" type="button">--</button>
+        <div class="month-badge-label">本月已練 / 目標</div>
+      </div>
     </div>
   </header>
 
   <main>
-    <div id="fabZone"></div>
     <div id="composerZone"></div>
     <div id="calendarZone"></div>
     <div class="status-line" id="statusLine">載入中…</div>
@@ -889,6 +939,7 @@
 <div id="sessionPickerZone"></div>
 <div id="numberPickerZone"></div>
 <div id="monthPickerZone"></div>
+<div id="exerciseCatalogModalZone"></div>
 <div id="datePickerZone"></div>
 <div id="savingSpinner" class="saving-spinner" style="display:none;">
   <div class="spinner-ring"></div>
@@ -918,6 +969,7 @@
     editingId: null,   // id of session being edited, else null for new
     openDetailId: null, // which history session is expanded
     settings: null,
+    exerciseCatalog: null,
     settingsOpen: false,
     settingsDraft: null,
     dayModalOpen: false,
@@ -937,7 +989,10 @@
     calendarViewYear: null,
     calendarViewMonth: null,
     monthPickerOpen: false,
-    monthPickerYear: null
+    monthPickerYear: null,
+    catalogModalOpen: false,
+    catalogModalDraft: null,
+    catalogModalCategory: null
   };
 
   // ---------- utils ----------
@@ -1369,14 +1424,15 @@
     d.exercises.forEach(function(ex){
       html += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
       html += '<div class="exercise-head">';
-      html += '<input type="text" class="ex-name-input" data-ex-id="'+ex.id+'" placeholder="動作名稱，例如 臥推" value="'+escapeAttr(ex.name)+'"/>';
+      html += '<div class="exercise-drag-handle" data-ex-id="'+ex.id+'" title="拖曳調整順序">⠿</div>';
+      html += buildExerciseNameFields("ex-cat-select", "ex-name-select", "ex-name-custom-input", ex.id, ex, d.dayType);
       html += '<button class="btn-text danger remove-ex-btn" data-ex-id="'+ex.id+'">移除</button>';
       html += '</div>';
 
       html += '<div class="set-header-row">';
       html += '<div class="set-idx"></div>';
       html += '<button type="button" class="set-w unit-toggle-btn toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
-      html += '<button type="button" class="set-r unit-toggle-btn reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
+      html += '<button type="button" class="set-r unit-toggle-btn reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數-'+(ex.repsManual ? "Rep" : "Range")+'</button>';
       html += '<div class="set-rir set-col-label">RIR</div>';
       html += '<div class="set-remove-spacer"></div>';
       html += '</div>';
@@ -1459,12 +1515,7 @@
       btn.addEventListener("click", function(){
         var ex = state.draft.exercises.find(function(e){ return e.id === btn.getAttribute("data-ex-id"); });
         if(!ex) return;
-        ex.repsManual = !ex.repsManual;
-        if(!ex.repsManual){
-          ex.sets.forEach(function(s){
-            if(REPS_OPTIONS.indexOf(s.reps) === -1){ s.reps = "8-10"; }
-          });
-        }
+        toggleExerciseRepsMode(ex);
         render();
       });
     });
@@ -1482,12 +1533,8 @@
         removeSetFromExercise(btn.getAttribute("data-ex-id"), btn.getAttribute("data-set-id"));
       });
     });
-    zone.querySelectorAll(".ex-name-input").forEach(function(inp){
-      inp.addEventListener("input", function(){
-        var ex = state.draft.exercises.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
-        if(ex) ex.name = inp.value;
-      });
-    });
+    wireExerciseNameFields(zone, state.draft.exercises);
+    enableExerciseDrag(zone, state.draft.exercises);
     zone.querySelectorAll(".set-input").forEach(function(inp){
       var handler = function(){
         var ex = state.draft.exercises.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
@@ -1509,6 +1556,106 @@
   }
 
   var RIR_OPTIONS = ["", "0-1", "1-2", "2-3"];
+  function enableExerciseDrag(zone, pool){
+    zone.querySelectorAll(".exercise-drag-handle").forEach(function(handle){
+      handle.addEventListener("pointerdown", function(e){
+        e.preventDefault();
+        var exId = handle.getAttribute("data-ex-id");
+        var block = zone.querySelector('.exercise-block[data-ex-id="'+exId+'"]');
+        if(!block) return;
+        block.classList.add("dragging");
+
+        function getBlocks(){ return Array.prototype.slice.call(zone.querySelectorAll(".exercise-block")); }
+
+        function onMove(ev){
+          var y = ev.clientY;
+          var blocks = getBlocks();
+          for(var i=0;i<blocks.length;i++){
+            var b = blocks[i];
+            if(b.getAttribute("data-ex-id") === exId) continue;
+            var rect = b.getBoundingClientRect();
+            if(y > rect.top && y < rect.bottom){
+              var targetId = b.getAttribute("data-ex-id");
+              var fromIdx = pool.findIndex(function(x){ return x.id === exId; });
+              var toIdx = pool.findIndex(function(x){ return x.id === targetId; });
+              if(fromIdx > -1 && toIdx > -1 && fromIdx !== toIdx){
+                var moved = pool.splice(fromIdx, 1)[0];
+                pool.splice(toIdx, 0, moved);
+                render();
+                var newBlock = zone.querySelector('.exercise-block[data-ex-id="'+exId+'"]');
+                if(newBlock) newBlock.classList.add("dragging");
+              }
+              break;
+            }
+          }
+        }
+        function onUp(){
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+          var b = zone.querySelector('.exercise-block[data-ex-id="'+exId+'"]');
+          if(b) b.classList.remove("dragging");
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+      });
+    });
+  }
+
+  function wireExerciseNameFields(zone, pool){
+    zone.querySelectorAll(".ex-cat-select").forEach(function(sel){
+      sel.addEventListener("change", function(){
+        var ex = pool.find(function(e){ return e.id === sel.getAttribute("data-ex-id"); });
+        if(!ex) return;
+        ex._nameCat = sel.value;
+        ex.name = "";
+        render();
+      });
+    });
+    zone.querySelectorAll(".ex-name-select").forEach(function(sel){
+      sel.addEventListener("change", function(){
+        var ex = pool.find(function(e){ return e.id === sel.getAttribute("data-ex-id"); });
+        if(!ex) return;
+        if(sel.value === "__custom__"){
+          ex.name = "";
+          render();
+        }else{
+          ex.name = sel.value;
+          var custom = zone.querySelector('.ex-name-custom-input[data-ex-id="'+ex.id+'"]');
+          if(custom){ custom.style.display = "none"; custom.value = ""; }
+        }
+      });
+    });
+    zone.querySelectorAll(".ex-name-custom-input").forEach(function(inp){
+      inp.addEventListener("input", function(){
+        var ex = pool.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
+        if(ex) ex.name = inp.value;
+      });
+    });
+  }
+
+  function buildExerciseNameFields(catClass, nameClass, customClass, exId, ex, sessionDayType){
+    var cats = (state.settings && state.settings.dayTypes) || [];
+    var currentCat = ex._nameCat || guessCategoryForExercise(ex.name, sessionDayType);
+    var names = catalogNamesFor(currentCat);
+    var isCustom = !!ex.name && names.indexOf(ex.name) === -1;
+    var html = '<div class="ex-name-fields">';
+    html += '<select class="'+catClass+'" data-ex-id="'+exId+'">';
+    cats.forEach(function(c){
+      html += '<option value="'+escapeAttr(c)+'"'+(c===currentCat?' selected':'')+'>'+escapeHtml(c)+'</option>';
+    });
+    html += '</select>';
+    html += '<select class="'+nameClass+'" data-ex-id="'+exId+'">';
+    html += '<option value=""'+(!ex.name?' selected':'')+'>選擇動作</option>';
+    names.forEach(function(n){
+      html += '<option value="'+escapeAttr(n)+'"'+(!isCustom && n===ex.name?' selected':'')+'>'+escapeHtml(n)+'</option>';
+    });
+    html += '<option value="__custom__"'+(isCustom?' selected':'')+'>＋ 自訂動作名稱</option>';
+    html += '</select>';
+    html += '<input type="text" class="'+customClass+'" data-ex-id="'+exId+'" placeholder="輸入動作名稱" value="'+escapeAttr(isCustom?ex.name:'')+'" style="'+(isCustom?'':'display:none;')+'">';
+    html += '</div>';
+    return html;
+  }
+
   function buildRirSelect(extraClass, exId, setId, current){
     var opts = RIR_OPTIONS.slice();
     if(current && opts.indexOf(current) === -1){ opts.push(current); }
@@ -1529,6 +1676,21 @@
         });
       }
     });
+  }
+  function toggleExerciseRepsMode(ex){
+    var nextManual = !ex.repsManual;
+    ex.sets.forEach(function(s){
+      if(nextManual){
+        // leaving Range mode, entering Rep mode: remember the range, restore last single rep (or blank)
+        s._rangeMemory = s.reps || s._rangeMemory || "";
+        s.reps = (s._repMemory !== undefined && s._repMemory !== null) ? s._repMemory : "";
+      }else{
+        // leaving Rep mode, entering Range mode: remember the rep, restore last range (or default)
+        s._repMemory = s.reps || s._repMemory || "";
+        s.reps = s._rangeMemory || "8-10";
+      }
+    });
+    ex.repsManual = nextManual;
   }
   function buildRepsField(extraClass, exId, setId, current, manual, target){
     if(manual){
@@ -1681,13 +1843,6 @@
   }
 
   // ---------- render: fab ----------
-  function renderFab(){
-    var zone = document.getElementById("fabZone");
-    if(state.composerOpen){ zone.innerHTML = ""; return; }
-    zone.innerHTML = '<button id="newSessionBtn">新增訓練紀錄</button>';
-    document.getElementById("newSessionBtn").addEventListener("click", openComposerForNew);
-  }
-
   // ---------- settings: weekly frequency + day-type templates ----------
   async function loadSettings(){
     try{
@@ -1716,6 +1871,58 @@
     }catch(e){
       showToast("設定儲存失敗：" + (e && e.message ? e.message : "未知錯誤"));
     }
+  }
+
+  // ---------- exercise catalog (per-category exercise name lists, used by the
+  // exercise-name dropdowns; seeded once from past session history, then it's
+  // an explicit editable list from then on) ----------
+  var EXERCISE_CATALOG_KEY = "exerciseCatalog";
+  function buildExerciseHistoryMap(){
+    var map = {};
+    state.sessions.forEach(function(s){
+      if(!s.dayType) return;
+      if(!map[s.dayType]) map[s.dayType] = [];
+      s.exercises.forEach(function(ex){
+        if(ex.name && map[s.dayType].indexOf(ex.name) === -1){
+          map[s.dayType].push(ex.name);
+        }
+      });
+    });
+    return map;
+  }
+  async function loadExerciseCatalog(){
+    try{
+      var res = await window.storage.get(EXERCISE_CATALOG_KEY, false);
+      state.exerciseCatalog = res && res.value ? JSON.parse(res.value) : null;
+    }catch(e){
+      state.exerciseCatalog = null;
+    }
+    if(!state.exerciseCatalog){
+      state.exerciseCatalog = buildExerciseHistoryMap();
+      var cats = (state.settings && state.settings.dayTypes) || [];
+      cats.forEach(function(c){ if(!state.exerciseCatalog[c]) state.exerciseCatalog[c] = []; });
+      await persistExerciseCatalog();
+    }
+    render();
+  }
+  async function persistExerciseCatalog(){
+    try{
+      var res = await window.storage.set(EXERCISE_CATALOG_KEY, JSON.stringify(state.exerciseCatalog), false);
+      if(!res){ showToast("動作清單儲存失敗，請重試"); }
+    }catch(e){
+      showToast("動作清單儲存失敗：" + (e && e.message ? e.message : "未知錯誤"));
+    }
+  }
+  function catalogNamesFor(category){
+    return (state.exerciseCatalog && state.exerciseCatalog[category]) || [];
+  }
+  function guessCategoryForExercise(name, sessionDayType){
+    var cats = (state.settings && state.settings.dayTypes) || [];
+    if(sessionDayType && catalogNamesFor(sessionDayType).indexOf(name) !== -1){ return sessionDayType; }
+    for(var i=0;i<cats.length;i++){
+      if(catalogNamesFor(cats[i]).indexOf(name) !== -1){ return cats[i]; }
+    }
+    return sessionDayType || (cats[0] || "");
   }
 
   // ---------- off-days (rest / unavailable days marked on the calendar) ----------
@@ -1891,6 +2098,108 @@
     state.settingsOpen = false;
     state.settingsDraft = null;
     render();
+  }
+
+  // ---------- exercise catalog modal ----------
+  function openExerciseCatalogModal(){
+    state.catalogModalDraft = JSON.parse(JSON.stringify(state.exerciseCatalog || {}));
+    var cats = (state.settings && state.settings.dayTypes) || [];
+    cats.forEach(function(c){ if(!state.catalogModalDraft[c]) state.catalogModalDraft[c] = []; });
+    state.catalogModalCategory = cats[0] || null;
+    state.catalogModalOpen = true;
+    render();
+  }
+  function closeExerciseCatalogModal(){
+    state.catalogModalOpen = false;
+    state.catalogModalDraft = null;
+    state.catalogModalCategory = null;
+    render();
+  }
+  async function saveExerciseCatalogModal(){
+    state.exerciseCatalog = state.catalogModalDraft;
+    await persistExerciseCatalog();
+    closeExerciseCatalogModal();
+    showToast("已更新訓練動作清單");
+  }
+  function selectCatalogCategory(cat){
+    state.catalogModalCategory = cat;
+    render();
+  }
+  function addCatalogExercise(){
+    var input = document.getElementById("catalogNewNameInput");
+    if(!input || !state.catalogModalCategory) return;
+    var name = input.value.trim();
+    if(!name) return;
+    var list = state.catalogModalDraft[state.catalogModalCategory];
+    if(list.indexOf(name) === -1){ list.push(name); }
+    input.value = "";
+    render();
+  }
+  function removeCatalogExercise(name){
+    if(!state.catalogModalCategory) return;
+    var list = state.catalogModalDraft[state.catalogModalCategory];
+    state.catalogModalDraft[state.catalogModalCategory] = list.filter(function(n){ return n !== name; });
+    render();
+  }
+  function renderExerciseCatalogModal(){
+    var zone = document.getElementById("exerciseCatalogModalZone");
+    if(!state.catalogModalOpen || !state.catalogModalDraft){ zone.innerHTML = ""; return; }
+    var cats = (state.settings && state.settings.dayTypes) || [];
+    var activeCat = state.catalogModalCategory || cats[0];
+
+    var html = '<div class="modal-overlay" id="catalogModalOverlay">';
+    html += '<div class="modal-sheet">';
+    html += '<div class="modal-header-row">';
+    html += '<div class="modal-title" style="margin:0;">編輯訓練動作清單</div>';
+    html += '<div class="modal-header-actions">';
+    html += '<button class="btn-sm btn-ghost" id="catalogAddFocusBtn">新增</button>';
+    html += '<button class="btn-sm btn-primary" id="catalogSaveBtn">儲存</button>';
+    html += '</div></div>';
+    html += '<div style="margin-top:14px;"></div>';
+    html += '<div class="catalog-split">';
+    html += '<div class="catalog-cat-col">';
+    cats.forEach(function(c){
+      html += '<button type="button" class="catalog-cat-btn'+(c===activeCat?' active':'')+'" data-cat="'+escapeAttr(c)+'">'+escapeHtml(c)+'</button>';
+    });
+    html += '</div>';
+    html += '<div class="catalog-name-col">';
+    var names = state.catalogModalDraft[activeCat] || [];
+    if(!names.length){
+      html += '<div class="empty-note">還沒有動作，新增一個吧</div>';
+    }else{
+      names.forEach(function(n){
+        html += '<div class="catalog-name-row"><span>'+escapeHtml(n)+'</span><button type="button" class="btn-text danger catalog-remove-name" data-name="'+escapeAttr(n)+'">刪除</button></div>';
+      });
+    }
+    html += '<div class="catalog-add-row"><input type="text" id="catalogNewNameInput" placeholder="新增動作名稱"><button type="button" class="btn btn-sm btn-primary" id="catalogAddBtn">新增</button></div>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div></div>';
+    zone.innerHTML = html;
+
+    document.getElementById("catalogModalOverlay").addEventListener("click", function(e){
+      if(e.target.id === "catalogModalOverlay") closeExerciseCatalogModal();
+    });
+    document.getElementById("catalogSaveBtn").addEventListener("click", saveExerciseCatalogModal);
+    var addFocusBtn = document.getElementById("catalogAddFocusBtn");
+    if(addFocusBtn) addFocusBtn.addEventListener("click", function(){
+      var inp = document.getElementById("catalogNewNameInput");
+      if(inp) inp.focus();
+    });
+    zone.querySelectorAll(".catalog-cat-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){ selectCatalogCategory(btn.getAttribute("data-cat")); });
+    });
+    zone.querySelectorAll(".catalog-remove-name").forEach(function(btn){
+      btn.addEventListener("click", function(){ removeCatalogExercise(btn.getAttribute("data-name")); });
+    });
+    var addBtn = document.getElementById("catalogAddBtn");
+    if(addBtn) addBtn.addEventListener("click", addCatalogExercise);
+    var newInput = document.getElementById("catalogNewNameInput");
+    if(newInput){
+      newInput.addEventListener("keydown", function(e){
+        if(e.key === "Enter"){ e.preventDefault(); addCatalogExercise(); }
+      });
+    }
   }
 
   function setDraftFrequency(n){
@@ -2425,13 +2734,14 @@
       if(editing){
         contentHtml += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
         contentHtml += '<div class="exercise-head">';
-        contentHtml += '<input type="text" class="ex-name-input daymodal-ex-name" data-ex-id="'+ex.id+'" value="'+escapeAttr(ex.name)+'"/>';
+        contentHtml += '<div class="exercise-drag-handle daymodal-drag-handle" data-ex-id="'+ex.id+'" title="拖曳調整順序">⠿</div>';
+        contentHtml += buildExerciseNameFields("ex-cat-select daymodal-ex-cat", "ex-name-select daymodal-ex-name-select", "ex-name-custom-input daymodal-ex-custom", ex.id, ex, d.dayType);
         contentHtml += '<button class="btn-text danger daymodal-remove-ex" data-ex-id="'+ex.id+'">刪除</button>';
         contentHtml += '</div>';
         contentHtml += '<div class="set-header-row">';
         contentHtml += '<div class="set-idx"></div>';
         contentHtml += '<button type="button" class="set-w unit-toggle-btn daymodal-toggle-unit-btn" data-ex-id="'+ex.id+'">重量 ('+(ex.weightUnit||"kg")+')</button>';
-        contentHtml += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數．'+(ex.repsManual ? "手動輸入" : "選單")+'</button>';
+        contentHtml += '<button type="button" class="set-r unit-toggle-btn daymodal-reps-mode-btn" data-ex-id="'+ex.id+'">反覆次數-'+(ex.repsManual ? "Rep" : "Range")+'</button>';
         contentHtml += '<div class="set-rir set-col-label">RIR</div>';
         contentHtml += '<div class="set-remove-spacer"></div>';
         contentHtml += '</div>';
@@ -2530,12 +2840,8 @@
       zone.querySelectorAll(".daymodal-remove-ex").forEach(function(btn){
         btn.addEventListener("click", function(){ removeExerciseFromDayModal(btn.getAttribute("data-ex-id")); });
       });
-      zone.querySelectorAll(".daymodal-ex-name").forEach(function(inp){
-        inp.addEventListener("input", function(){
-          var ex = d.exercises.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
-          if(ex) ex.name = inp.value;
-        });
-      });
+      wireExerciseNameFields(zone, d.exercises);
+      enableExerciseDrag(zone, d.exercises);
       zone.querySelectorAll(".daymodal-set-input").forEach(function(inp){
         var handler = function(){
           var ex = d.exercises.find(function(e){ return e.id === inp.getAttribute("data-ex-id"); });
@@ -2562,12 +2868,7 @@
         btn.addEventListener("click", function(){
           var ex = d.exercises.find(function(e){ return e.id === btn.getAttribute("data-ex-id"); });
           if(!ex) return;
-          ex.repsManual = !ex.repsManual;
-          if(!ex.repsManual){
-            ex.sets.forEach(function(s){
-              if(REPS_OPTIONS.indexOf(s.reps) === -1){ s.reps = "8-10"; }
-            });
-          }
+          toggleExerciseRepsMode(ex);
           render();
         });
       });
@@ -2596,6 +2897,8 @@
     var target = computeMonthTarget();
     badge.innerHTML = count + '<span class="slash">/</span>' + target;
     badge.onclick = openSettings;
+    var catalogBtn = document.getElementById("openExerciseCatalogBtn");
+    if(catalogBtn) catalogBtn.onclick = openExerciseCatalogModal;
   }
 
   // ---------- render: history ----------
@@ -2709,7 +3012,7 @@
   }
 
   function anyModalOpen(){
-    return !!(state.settingsOpen || state.dayModalOpen || state.datePicker || state.offDayModalOpen || state.sessionPickerOpen || state.numberPicker || state.monthPickerOpen);
+    return !!(state.settingsOpen || state.dayModalOpen || state.datePicker || state.offDayModalOpen || state.sessionPickerOpen || state.numberPicker || state.monthPickerOpen || state.catalogModalOpen);
   }
 
   var _modalWasOpenLastRender = false;
@@ -2735,9 +3038,9 @@
     renderSessionPickerModal();
     renderNumberPickerModal();
     renderMonthPickerModal();
+    renderExerciseCatalogModal();
     renderComposer();
     renderCalendar();
-    renderFab();
     clampModalSheets();
     scrollModalIntoViewIfJustOpened();
     document.getElementById("statusLine").textContent = state.loaded
@@ -2881,7 +3184,7 @@
 
       if(signinScreenEl) signinScreenEl.style.display = "none";
       document.getElementById("app").style.display = "";
-      Promise.all([loadSettings(), loadOffDays()]).then(loadSessions);
+      Promise.all([loadSettings(), loadOffDays()]).then(loadSessions).then(loadExerciseCatalog);
     }catch(err){
       if(loadingEl) loadingEl.style.display = "none";
       if(googleBtn) googleBtn.style.display = "block";
