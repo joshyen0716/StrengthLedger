@@ -224,7 +224,35 @@
     padding:9px 2px; border-bottom:1px solid var(--graphite-800);
     font-size:13.5px;
   }
+  .catalog-name-row.editing{ flex-wrap:wrap; gap:6px; padding:10px 2px; }
+  .catalog-name-edit{
+    flex:1 1 100%; text-align:left; background:none; border:none;
+    color:var(--chalk-100); font-size:14px; font-weight:700; font-family:inherit;
+    padding:2px 0; cursor:pointer;
+  }
+  .catalog-move-select{ flex:1 1 auto; min-width:0; font-size:12.5px; padding:7px 8px; }
   .catalog-add-row{ display:flex; gap:8px; margin-top:12px; }
+  .ex-num{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:22px; height:22px; border-radius:999px; margin-right:8px;
+    background:var(--brass-500); color:var(--graphite-950);
+    font-size:12px; font-weight:800; font-family:ui-monospace,monospace; flex-shrink:0;
+  }
+  .add-exercise-btn{
+    width:100%; margin-top:16px; padding:12px;
+    border:1px solid var(--iron-red); border-radius:var(--radius-sm);
+    background:rgba(217,85,42,0.16); color:var(--iron-red);
+    font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;
+  }
+  .add-exercise-btn:active{ background:rgba(217,85,42,0.3); }
+  .exercise-block{ border-radius:12px; transition:transform .12s, box-shadow .12s, background .12s; }
+  .exercise-block.dragging{
+    opacity:1; transform:scale(1.025); position:relative; z-index:3;
+    background:rgba(217,85,42,0.14); outline:2px solid var(--iron-red); outline-offset:4px;
+    box-shadow:0 12px 28px rgba(0,0,0,0.55);
+  }
+  .exercise-block.drop-flash{ animation:dropflash .9s ease-out; }
+  @keyframes dropflash{ 0%{ background:rgba(217,85,42,0.5); } 100%{ background:transparent; } }
   .catalog-add-row input{ flex:1; }
 
   .session-picker-row{
@@ -652,7 +680,6 @@
     padding:6px 3px; touch-action:none; flex-shrink:0; user-select:none;
   }
   .exercise-drag-handle:active{ cursor:grabbing; color:var(--brass-500); }
-  .exercise-block.dragging{ opacity:0.5; }
   .ex-name-fields{
     display:flex; gap:6px; flex:1 1 auto; min-width:0; flex-wrap:wrap;
   }
@@ -940,6 +967,7 @@
 <div id="numberPickerZone"></div>
 <div id="monthPickerZone"></div>
 <div id="exerciseCatalogModalZone"></div>
+<div id="catalogRenameZone"></div>
 <div id="datePickerZone"></div>
 <div id="savingSpinner" class="saving-spinner" style="display:none;">
   <div class="spinner-ring"></div>
@@ -992,7 +1020,10 @@
     monthPickerYear: null,
     catalogModalOpen: false,
     catalogModalDraft: null,
-    catalogModalCategory: null
+    catalogModalCategory: null,
+    catalogEditing: false,
+    catalogPendingRenames: [],
+    catalogRename: null
   };
 
   // ---------- utils ----------
@@ -1064,8 +1095,12 @@
     return count + 1;
   }
 
-  function findLatestSessionByTag(tag){
+  function findLatestSessionByTag(tag, beforeDate){
     var matches = state.sessions.filter(function(s){ return s.dayType === tag; });
+    if(beforeDate){
+      var earlier = matches.filter(function(s){ return s.date <= beforeDate; });
+      if(earlier.length) matches = earlier;
+    }
     if(!matches.length) return null;
     matches.sort(function(a,b){
       if(a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -1421,9 +1456,10 @@
       html += '</div></div>';
     }
 
-    d.exercises.forEach(function(ex){
+    d.exercises.forEach(function(ex, exIdx){
       html += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
       html += '<div class="exercise-head">';
+      html += '<span class="ex-num">'+(exIdx+1)+'</span>';
       html += '<div class="exercise-drag-handle" data-ex-id="'+ex.id+'" title="拖曳調整順序">⠿</div>';
       html += buildExerciseNameFields("ex-cat-select", "ex-name-select", "ex-name-custom-input", ex.id, ex, d.dayType);
       html += '<button class="btn-text danger remove-ex-btn" data-ex-id="'+ex.id+'">移除</button>';
@@ -1451,7 +1487,7 @@
       html += '</div>';
     });
 
-    html += '<div class="add-exercise-row"><button class="btn btn-ghost btn-block add-ex-action">+ 新增動作</button></div>';
+    html += '<div class="add-exercise-row"><button type="button" class="add-exercise-btn add-ex-action">新增一個訓練動作</button></div>';
 
     html += '<div class="row" style="margin-top:16px;">';
     html += '<button class="btn btn-ghost" id="cancelDraftBtn" style="flex:1;">取消</button>';
@@ -1475,7 +1511,7 @@
         var turningOn = state.draft.dayType !== tag;
         state.draft.dayType = turningOn ? tag : "";
         if(turningOn && !state.editingId){
-          var prev = findLatestSessionByTag(tag);
+          var prev = findLatestSessionByTag(tag, state.draft.date);
           if(prev){
             state.draft.exercises = prev.exercises.map(function(ex){
               return {
@@ -1485,6 +1521,7 @@
                 sets: ex.sets.map(function(s){ return { id: uid(), weight: s.weight, reps: s.reps, rir: s.rir }; })
               };
             });
+            normalizeRepsManualFlags(state.draft.exercises);
             showToast('已帶入上次「'+tag+'」的內容，可直接編輯');
           }else{
             showToast('目前沒有標記過「'+tag+'」的紀錄，先手動輸入這次的內容吧');
@@ -1584,6 +1621,7 @@
                 render();
                 var newBlock = zone.querySelector('.exercise-block[data-ex-id="'+exId+'"]');
                 if(newBlock) newBlock.classList.add("dragging");
+                if(navigator.vibrate){ try{ navigator.vibrate(18); }catch(e){} }
               }
               break;
             }
@@ -1593,7 +1631,13 @@
           document.removeEventListener("pointermove", onMove);
           document.removeEventListener("pointerup", onUp);
           var b = zone.querySelector('.exercise-block[data-ex-id="'+exId+'"]');
-          if(b) b.classList.remove("dragging");
+          if(b){
+            b.classList.remove("dragging");
+            b.classList.add("drop-flash");
+          }
+          var finalIdx = pool.findIndex(function(x){ return x.id === exId; });
+          if(finalIdx > -1) showToast("已放到第 " + (finalIdx+1) + " 個動作");
+          if(navigator.vibrate){ try{ navigator.vibrate([25]); }catch(e){} }
         }
         document.addEventListener("pointermove", onMove);
         document.addEventListener("pointerup", onUp);
@@ -2106,6 +2150,9 @@
     var cats = (state.settings && state.settings.dayTypes) || [];
     cats.forEach(function(c){ if(!state.catalogModalDraft[c]) state.catalogModalDraft[c] = []; });
     state.catalogModalCategory = cats[0] || null;
+    state.catalogEditing = false;
+    state.catalogPendingRenames = [];
+    state.catalogRename = null;
     state.catalogModalOpen = true;
     render();
   }
@@ -2113,13 +2160,25 @@
     state.catalogModalOpen = false;
     state.catalogModalDraft = null;
     state.catalogModalCategory = null;
+    state.catalogEditing = false;
+    state.catalogPendingRenames = [];
+    state.catalogRename = null;
     render();
   }
   async function saveExerciseCatalogModal(){
     state.exerciseCatalog = state.catalogModalDraft;
+    var renames = state.catalogPendingRenames || [];
+    if(renames.length){
+      renames.forEach(function(r){
+        state.sessions.forEach(function(sess){
+          sess.exercises.forEach(function(ex){ if(ex.name === r.from) ex.name = r.to; });
+        });
+      });
+      await persistSessions();
+    }
     await persistExerciseCatalog();
     closeExerciseCatalogModal();
-    showToast("已更新訓練動作清單");
+    showToast(renames.length ? "已更新動作清單，並同步修改過往紀錄" : "已更新訓練動作清單");
   }
   function selectCatalogCategory(cat){
     state.catalogModalCategory = cat;
@@ -2141,11 +2200,59 @@
     state.catalogModalDraft[state.catalogModalCategory] = list.filter(function(n){ return n !== name; });
     render();
   }
+  function moveCatalogExercise(name, toCat){
+    var from = state.catalogModalCategory;
+    if(!from || !toCat || toCat === from) return;
+    var fromList = state.catalogModalDraft[from];
+    state.catalogModalDraft[from] = fromList.filter(function(n){ return n !== name; });
+    if(!state.catalogModalDraft[toCat]) state.catalogModalDraft[toCat] = [];
+    if(state.catalogModalDraft[toCat].indexOf(name) === -1){ state.catalogModalDraft[toCat].push(name); }
+    showToast("已移到「" + toCat + "」");
+    render();
+  }
+  function confirmCatalogRename(){
+    var r = state.catalogRename;
+    var inp = document.getElementById("catalogRenameInput");
+    if(!r || !inp) return;
+    var newName = inp.value.trim();
+    if(!newName){ showToast("名稱不能空白"); return; }
+    if(newName === r.oldName){ state.catalogRename = null; render(); return; }
+    var list = state.catalogModalDraft[r.category];
+    if(list.indexOf(newName) !== -1){ showToast("這個分類已經有同名動作"); return; }
+    var i = list.indexOf(r.oldName);
+    if(i > -1) list[i] = newName;
+    state.catalogPendingRenames.push({ from: r.oldName, to: newName });
+    state.catalogRename = null;
+    render();
+  }
+  function renderCatalogRenameModal(){
+    var zone = document.getElementById("catalogRenameZone");
+    if(!state.catalogRename){ zone.innerHTML = ""; return; }
+    var html = '<div class="modal-overlay" id="catalogRenameOverlay">';
+    html += '<div class="modal-sheet">';
+    html += '<div class="modal-title" style="margin-bottom:4px;">修改動作名稱</div>';
+    html += '<div class="modal-sub">過往套用過這個動作的訓練紀錄，儲存後會一起改名</div>';
+    html += '<input type="text" id="catalogRenameInput" value="'+escapeAttr(state.catalogRename.oldName)+'">';
+    html += '<div class="modal-actions">';
+    html += '<button class="btn btn-ghost" id="catalogRenameCancel" style="flex:1;">取消</button>';
+    html += '<button class="btn btn-primary" id="catalogRenameOk" style="flex:1.4;">確定</button>';
+    html += '</div></div></div>';
+    zone.innerHTML = html;
+    document.getElementById("catalogRenameOverlay").addEventListener("click", function(e){
+      if(e.target.id === "catalogRenameOverlay"){ state.catalogRename = null; render(); }
+    });
+    document.getElementById("catalogRenameCancel").addEventListener("click", function(){ state.catalogRename = null; render(); });
+    document.getElementById("catalogRenameOk").addEventListener("click", confirmCatalogRename);
+    var inp = document.getElementById("catalogRenameInput");
+    inp.addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); confirmCatalogRename(); } });
+    inp.focus(); inp.select();
+  }
   function renderExerciseCatalogModal(){
     var zone = document.getElementById("exerciseCatalogModalZone");
     if(!state.catalogModalOpen || !state.catalogModalDraft){ zone.innerHTML = ""; return; }
     var cats = (state.settings && state.settings.dayTypes) || [];
     var activeCat = state.catalogModalCategory || cats[0];
+    var editing = state.catalogEditing;
 
     var html = '<div class="modal-overlay" id="catalogModalOverlay">';
     html += '<div class="modal-sheet">';
@@ -2153,6 +2260,7 @@
     html += '<div class="modal-title" style="margin:0;">編輯訓練動作清單</div>';
     html += '<div class="modal-header-actions">';
     html += '<button class="btn-sm btn-ghost" id="catalogAddFocusBtn">新增</button>';
+    html += '<button class="btn-sm '+(editing ? 'btn-primary' : 'btn-ghost')+'" id="catalogEditBtn">'+(editing ? '完成編輯' : '編輯')+'</button>';
     html += '<button class="btn-sm btn-primary" id="catalogSaveBtn">儲存</button>';
     html += '</div></div>';
     html += '<div style="margin-top:14px;"></div>';
@@ -2168,7 +2276,17 @@
       html += '<div class="empty-note">還沒有動作，新增一個吧</div>';
     }else{
       names.forEach(function(n){
-        html += '<div class="catalog-name-row"><span>'+escapeHtml(n)+'</span><button type="button" class="btn-text danger catalog-remove-name" data-name="'+escapeAttr(n)+'">刪除</button></div>';
+        if(editing){
+          html += '<div class="catalog-name-row editing">';
+          html += '<button type="button" class="catalog-name-edit" data-name="'+escapeAttr(n)+'">'+escapeHtml(n)+' ✎</button>';
+          html += '<select class="catalog-move-select" data-name="'+escapeAttr(n)+'">';
+          cats.forEach(function(c){ html += '<option value="'+escapeAttr(c)+'"'+(c===activeCat?' selected':'')+'>'+escapeHtml(c)+'</option>'; });
+          html += '</select>';
+          html += '<button type="button" class="btn-text danger catalog-remove-name" data-name="'+escapeAttr(n)+'">刪除</button>';
+          html += '</div>';
+        }else{
+          html += '<div class="catalog-name-row"><span>'+escapeHtml(n)+'</span><button type="button" class="btn-text danger catalog-remove-name" data-name="'+escapeAttr(n)+'">刪除</button></div>';
+        }
       });
     }
     html += '<div class="catalog-add-row"><input type="text" id="catalogNewNameInput" placeholder="新增動作名稱"><button type="button" class="btn btn-sm btn-primary" id="catalogAddBtn">新增</button></div>';
@@ -2181,6 +2299,10 @@
       if(e.target.id === "catalogModalOverlay") closeExerciseCatalogModal();
     });
     document.getElementById("catalogSaveBtn").addEventListener("click", saveExerciseCatalogModal);
+    document.getElementById("catalogEditBtn").addEventListener("click", function(){
+      state.catalogEditing = !state.catalogEditing;
+      render();
+    });
     var addFocusBtn = document.getElementById("catalogAddFocusBtn");
     if(addFocusBtn) addFocusBtn.addEventListener("click", function(){
       var inp = document.getElementById("catalogNewNameInput");
@@ -2191,6 +2313,15 @@
     });
     zone.querySelectorAll(".catalog-remove-name").forEach(function(btn){
       btn.addEventListener("click", function(){ removeCatalogExercise(btn.getAttribute("data-name")); });
+    });
+    zone.querySelectorAll(".catalog-name-edit").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        state.catalogRename = { category: activeCat, oldName: btn.getAttribute("data-name") };
+        render();
+      });
+    });
+    zone.querySelectorAll(".catalog-move-select").forEach(function(sel){
+      sel.addEventListener("change", function(){ moveCatalogExercise(sel.getAttribute("data-name"), sel.value); });
     });
     var addBtn = document.getElementById("catalogAddBtn");
     if(addBtn) addBtn.addEventListener("click", addCatalogExercise);
@@ -2730,10 +2861,11 @@
     // build the exercise/content HTML once; used inside the split-main pane
     // when read-only, or inline (full width) when editing.
     var contentHtml = "";
-    d.exercises.forEach(function(ex){
+    d.exercises.forEach(function(ex, exIdx){
       if(editing){
         contentHtml += '<div class="exercise-block" data-ex-id="'+ex.id+'">';
         contentHtml += '<div class="exercise-head">';
+        contentHtml += '<span class="ex-num">'+(exIdx+1)+'</span>';
         contentHtml += '<div class="exercise-drag-handle daymodal-drag-handle" data-ex-id="'+ex.id+'" title="拖曳調整順序">⠿</div>';
         contentHtml += buildExerciseNameFields("ex-cat-select daymodal-ex-cat", "ex-name-select daymodal-ex-name-select", "ex-name-custom-input daymodal-ex-custom", ex.id, ex, d.dayType);
         contentHtml += '<button class="btn-text danger daymodal-remove-ex" data-ex-id="'+ex.id+'">刪除</button>';
@@ -2758,7 +2890,7 @@
         contentHtml += '</div>';
       }else{
         contentHtml += '<div class="daymodal-detail-exercise">';
-        contentHtml += '<div class="detail-exercise-name">'+escapeHtml(ex.name)+'</div>';
+        contentHtml += '<div class="detail-exercise-name"><span class="ex-num">'+(exIdx+1)+'</span>'+escapeHtml(ex.name)+'</div>';
         ex.sets.forEach(function(st){
           contentHtml += '<div class="detail-set">';
           contentHtml += '<span class="w">'+escapeHtml(st.weight||'—')+(st.weight ? (ex.weightUnit||"kg").toUpperCase() : '')+'</span>';
@@ -2793,10 +2925,10 @@
       }
       html += '<div class="modal-header-actions">'+actionButtonsHtml("Top")+'</div>';
       html += '</div>';
-      html += '<button type="button" class="add-set-btn daymodal-add-exercise" style="margin-top:10px;">新增一個訓練動作</button>';
       html += '<div style="margin-top:14px;"></div>';
 
       html += contentHtml;
+      html += '<button type="button" class="add-exercise-btn daymodal-add-exercise">新增一個訓練動作</button>';
 
       html += '<div class="modal-header-row" style="justify-content:flex-end; margin-top:18px; padding-top:14px; border-top:1px solid var(--graphite-700);">';
       html += '<div class="modal-header-actions">'+actionButtonsHtml("Bottom")+'</div>';
@@ -3012,7 +3144,7 @@
   }
 
   function anyModalOpen(){
-    return !!(state.settingsOpen || state.dayModalOpen || state.datePicker || state.offDayModalOpen || state.sessionPickerOpen || state.numberPicker || state.monthPickerOpen || state.catalogModalOpen);
+    return !!(state.settingsOpen || state.dayModalOpen || state.datePicker || state.offDayModalOpen || state.sessionPickerOpen || state.numberPicker || state.monthPickerOpen || state.catalogModalOpen || state.catalogRename);
   }
 
   var _modalWasOpenLastRender = false;
@@ -3039,6 +3171,7 @@
     renderNumberPickerModal();
     renderMonthPickerModal();
     renderExerciseCatalogModal();
+    renderCatalogRenameModal();
     renderComposer();
     renderCalendar();
     clampModalSheets();
